@@ -16,10 +16,12 @@ int dirPin = 2;
 int powerPin = 4;
 boolean useSleep = true; // true= use sleep pin, false = use enable pin
 int ledPin = 13;
+int dcPin = 5; // turn driver power on/off
 
 // maximum speed is 160pps which should be OK for most
 // tin can steppers
-#define MAXSPEED 160
+#define MAXSPEED 4000
+#define ACCELETARION 400
 #define SPEEDMULT 3
 
 
@@ -39,7 +41,7 @@ boolean powerIsOn = false;
 long timerStartTime = 0;
 
 //Define the period to wait before turning power off (in milliseconds)
-const int activeTimePeriod = 30000;
+const int activeTimePeriod = 15000;
 
 char tempString[10];
 
@@ -48,13 +50,18 @@ void setup()
 {  
   Serial.begin(9600);
   pinMode(powerPin,OUTPUT);
+  pinMode(ledPin, OUTPUT);
+  pinMode(dcPin, OUTPUT);
+  digitalWrite(dcPin, LOW);
   // we ignore the Moonlite speed setting because Accelstepper implements
   // ramping, making variable speeds un-necessary
-  stepper.setSpeed(MAXSPEED);
+  //stepper.setSpeed(MAXSPEED);
   stepper.setMaxSpeed(MAXSPEED);
-  stepper.setAcceleration(50);
+  stepper.setAcceleration(ACCELETARION);
   turnOff();
   memset(line, 0, MAXCOMMAND);
+  digitalWrite(dcPin, HIGH);
+  delay(1000); // wait driver boot
 }
 
 
