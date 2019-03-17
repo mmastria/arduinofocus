@@ -16,14 +16,14 @@ int dirPin = 2;
 int powerPin = 4;
 boolean useSleep = true; // true= use sleep pin, false = use enable pin
 int ledPin = 13;
-int dcPin = 5; // turn driver power on/off
+int dcPin1 = 5; // turn driver power on/off
+int dcPin2 = 6; // turn driver power on/off
 
 // maximum speed is 160pps which should be OK for most
 // tin can steppers
 #define MAXSPEED 4000
 #define ACCELETARION 400
 #define SPEEDMULT 3
-
 
 AccelStepper stepper(1, stepperPin, dirPin);
 
@@ -39,11 +39,17 @@ int idx = 0;
 boolean isRunning = false;
 boolean powerIsOn = false;
 long timerStartTime = 0;
+long timerTemp = 0;
 
 //Define the period to wait before turning power off (in milliseconds)
-const int activeTimePeriod = 15000;
+const int activeTimePeriod = 10000;
+const int delayTemp = 200;
 
 char tempString[10];
+
+
+#define LM35_SENSOR    A0 // LM35DZ
+volatile int lm35Temperature = 0;
 
 
 void setup()
@@ -51,8 +57,11 @@ void setup()
   Serial.begin(9600);
   pinMode(powerPin,OUTPUT);
   pinMode(ledPin, OUTPUT);
-  pinMode(dcPin, OUTPUT);
-  digitalWrite(dcPin, LOW);
+  pinMode(dcPin1, OUTPUT);
+  pinMode(dcPin2, OUTPUT);
+  pinMode(LM35_SENSOR, INPUT);
+  digitalWrite(dcPin1, HIGH);
+  digitalWrite(dcPin2, HIGH);
   // we ignore the Moonlite speed setting because Accelstepper implements
   // ramping, making variable speeds un-necessary
   //stepper.setSpeed(MAXSPEED);
@@ -60,8 +69,10 @@ void setup()
   stepper.setAcceleration(ACCELETARION);
   turnOff();
   memset(line, 0, MAXCOMMAND);
-  digitalWrite(dcPin, HIGH);
-  delay(1000); // wait driver boot
+  digitalWrite(dcPin1, LOW);
+  digitalWrite(dcPin2, LOW);
+  readTemperatureSlow(LM35_SENSOR);
+  timerTemp = millis();
 }
 
 
@@ -79,12 +90,19 @@ void loop(){
       isRunning = false;
     }
   }
-  else if(powerIsOn)
-  {
-     //Turn power off if active time period has passed.
-    if(millis() - timerStartTime > activeTimePeriod)
+  else {
+    if(powerIsOn)
     {
-      turnOff();
+       //Turn power off if active time period has passed.
+      if(millis() - timerStartTime > activeTimePeriod)
+      {
+        turnOff();
+      }
+    }
+    if(millis() - timerTemp > delayTemp)
+    {
+      readTemperatureSlow(LM35_SENSOR);
+      timerTemp = millis();
     }
   }
 
@@ -196,7 +214,10 @@ void loop(){
 
     //Returns the current temperature where YYYY is a four-digit signed (2’s complement) hex number.
     if (!strcasecmp(cmd, "GT")) {
-      Serial.print("0020#");
+      //Serial.print("0020#");
+      sprintf(tempString, "%04X", lm35Temperature);
+      Serial.print(tempString);
+      Serial.print("#");
     }
 
     //Get the version of the firmware as a two-digit decimal number where the first digit is the major version number, and the second digit is the minor version number.
@@ -274,3 +295,93 @@ void turnOff() {
   isRunning = false; 
   powerIsOn = false;
 }
+
+////////////////////////////////////////////////////////
+
+// http://www.elcojacobs.com/eleminating-noise-from-sensor-readings-on-arduino-with-digital-filtering/
+#define NUM_READS 10
+float readTemperature(int sensorpin){
+   // read multiple values and sort them to take the mode
+   int sortedValues[NUM_READS];
+   analogRead(sensorpin);
+   //delay(10);
+   for(int i=0;i<NUM_READS;i++){
+     int value = 0;
+     do 
+     {
+       value = analogRead(sensorpin);
+       if(value==0) {
+        value = lm35Temperature*1023.0/1100.0;
+       }
+     } while ((lm35Temperature!=0) && (abs(int(value*1100.0/1023.0)-lm35Temperature)>30));
+     int j;
+     if(value<sortedValues[0] || i==0){
+        j=0; //insert at first position
+     }
+     else{
+       for(j=1;j<i;j++){
+          if(sortedValues[j-1]<=value && sortedValues[j]>=value){
+            // j is insert position
+            break;
+          }
+       }
+     }
+     for(int k=i;k>j;k--){
+       // move all values higher than current reading up one position
+       sortedValues[k]=sortedValues[k-1];
+     }
+     sortedValues[j]=value; //insert current reading
+   }
+   //return scaled mode of 10 values
+   float returnval = 0;
+   for(int i=NUM_READS/2-5;i<(NUM_READS/2+5);i++){
+     returnval +=sortedValues[i];
+   }
+   returnval = returnval/10;
+   return returnval*1100/1023;
+}
+
+// mesmo calculo anterior (moda) para remover spikes (picos) de valor
+#define MAX_READS 10
+void readTemperatureSlow(int sensorpin) {
+
+  static float sortedValues[MAX_READS];
+  static int i = 0;
+
+  if(i<MAX_READS) {
+    float value = readTemperature(sensorpin);
+    int j;
+    if(value<sortedValues[0] || i==0){
+      j=0; //insert at first position
+    }
+    else {
+      for(j=1;j<i;j++) {
+        if(sortedValues[j-1]<=value && sortedValues[j]>=value) {
+          // j is insert position
+          break;
+        }
+      }
+    }
+    for(int k=i;k>j;k--){
+      // move all values higher than current reading up one position
+      sortedValues[k]=sortedValues[k-1];
+    }
+    sortedValues[j]=value; //insert current reading
+    i++;
+  }
+  else {
+    float returnval = 0;
+    for(int j=(i+1)/2-5; j<((i+1)/2+5); j++){
+      returnval +=sortedValues[j];
+    }
+    returnval = returnval/10;
+    for(i=MAX_READS-1; i>=0; i--){
+      sortedValues[i]=0;
+    }
+    i = 0;
+    lm35Temperature = returnval;    
+  }
+}
+
+////////////////////////////////////////////////////////
+
